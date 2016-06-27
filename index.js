@@ -4,36 +4,83 @@ const mutate = require('xtend/mutable')
 const assert = require('assert')
 const xtend = require('xtend')
 
-module.exports = choo
+module.exports = store
 
 // framework for creating sturdy web applications
-// null -> fn
-function choo () {
+// obj -> fn
+function store (_handlers) {
+  var reducersCalled = false
+  var effectsCalled = false
+  var stateCalled = false
+  var subsCalled = false
+  var send = null
+  const handlers = Object.assign({
+    onError: (err) => {
+      if (err) console.error(err)
+    },
+    onAction: () => {},
+    onState: () => {}
+  }, _handlers || {})
+
+  ;['onError', 'onAction', 'onState'].forEach((handler) => {
+    if (typeof handlers[handler] !== 'function') {
+      console.warn(`${handler} passed to store is not a function`)
+    }
+  })
+
   const _models = []
 
   start.model = model
   start.start = start
+  start.state = getState
 
   return start
 
-  // start the application
-  // (str?, obj?) -> DOMNode
-  function start (opts, onstate) {
+  // create a new model
+  // (obj) -> null
+  function model (model) {
+    _models.push(model)
+  }
+
+  // get the current application state
+  // (obj) -> obj
+  function getState (opts) {
     opts = opts || {}
-    onstate = onstate || () => true
+    if (send === null) {
+      console.warn('must call store.start() before store.state()')
+      return {}
+    }
+    if (opts.noFreeze) return xtend(send.state())
+    else return Object.freeze(xtend(send.state()))
+  }
+
+  // start the application
+  // (obj?) -> fn
+  function start (opts) {
+    opts = opts || {}
     const initialState = {}
     const reducers = {}
     const effects = {}
 
     _models.forEach(function (model) {
-      if (model.state) apply(model.namespace, model.state, initialState)
-      if (model.reducers) apply(model.namespace, model.reducers, reducers)
-      if (model.effects) apply(model.namespace, model.effects, effects)
+      if (!stateCalled && model.state && !opts.noState) {
+        apply(model.namespace, model.state, initialState)
+      }
+      if (!reducersCalled && model.reducers && !opts.noReducers) {
+        apply(model.namespace, model.reducers, reducers)
+      }
+      if (!effectsCalled && model.effects && !opts.noEffects) {
+        apply(model.namespace, model.effects, effects)
+      }
     })
+
+    if (!opts.noState) stateCalled = true
+    if (!opts.noReducers) reducersCalled = true
+    if (!opts.noEffects) effectsCalled = true
 
     // send() is used to trigger actions inside
     // effects and subscriptions
-    const send = sendAction({
+    send = sendAction({
       onaction: handleAction,
       onchange: onchange,
       state: initialState
@@ -45,13 +92,16 @@ function choo () {
     // be loaded
     document.addEventListener('DOMContentLoaded', function () {
       _models.forEach(function (model) {
-        if (model.subscriptions) {
+        if (!subsCalled && model.subscriptions && !opts.noSubscriptions) {
           assert.ok(Array.isArray(model.subscriptions), 'subs must be an arr')
           model.subscriptions.forEach(function (sub) {
             sub(send)
           })
         }
       })
+      if (!opts.noSubscriptions) {
+        subsCalled = true
+      }
     })
 
     return send
@@ -63,6 +113,8 @@ function choo () {
       var reducersCalled = false
       var effectsCalled = false
       const newState = xtend(state)
+
+      handlers.onAction(action, state, action.type, send)
 
       // validate if a namespace exists. Namespaces
       // are delimited by the first ':'. Perhaps
@@ -94,7 +146,7 @@ function choo () {
       }
 
       if (!reducersCalled && !effectsCalled) {
-        throw new Error('Could not find action ' + action.type)
+        handlers.onError(new Error(`Could not find action ${action.type}`), state, send)
       }
 
       // allows (newState === oldState) checks
@@ -105,14 +157,8 @@ function choo () {
     // (obj, obj) -> null
     function onchange (action, newState, oldState) {
       if (newState === oldState) return
-      onstate(action, newState, oldState, send)
+      handlers.onState(action, newState, oldState, send)
     }
-  }
-
-  // create a new model
-  // (str?, obj) -> null
-  function model (model) {
-    _models.push(model)
   }
 }
 
