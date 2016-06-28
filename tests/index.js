@@ -1,6 +1,17 @@
 const tape = require('tape')
 const store = require('../')
 
+tape('setup', function (t) {
+  t.test('throws error if not evoked with a function', function (t) {
+    t.plan(1)
+    t.throws(() => {
+      store({
+        onState: 1
+      })
+    }, 'throws if given non-function')
+  })
+})
+
 tape('state, reducers, effects', function (t) {
   t.test('on by default', function (t) {
     t.plan(3)

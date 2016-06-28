@@ -24,7 +24,7 @@ function store (_handlers) {
 
   ;['onError', 'onAction', 'onState'].forEach((handler) => {
     if (typeof handlers[handler] !== 'function') {
-      console.warn(`${handler} passed to store is not a function`)
+      throw new Error(handler + ' passed to store is not a function')
     }
   })
 
