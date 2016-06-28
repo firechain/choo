@@ -32,6 +32,37 @@ tape('state, reducers, effects', function (t) {
     send('reducer')
     send('effect')
   })
+
+  t.test('noState', function (t) {
+    t.plan(1)
+    const app = store()
+    app.model({
+      state: {
+        hasState: true
+      }
+    })
+    app.start({ noState: true })
+    t.notOk(app.state().hasState, 'no initial state')
+  })
+
+  t.test('noReducers, noEffects', function (t) {
+    t.plan(2)
+    const app = store({
+      onError: () => {
+        t.pass('no effects or reducers')
+      }
+    })
+    app.model({
+      reducers: { reducer: () => true },
+      effects: { effect: () => true }
+    })
+    const send = app.start({
+      noReducers: true,
+      noEffects: true
+    })
+    send('reducer')
+    send('effect')
+  })
 })
 
 tape('state', function (t) {
@@ -46,6 +77,52 @@ tape('state', function (t) {
     t.deepEqual(app.state(), {}, 'returns empty object if invoked before start()')
     app.start()
     t.deepEqual(app.state(), { foo: 'bar' }, 'returns state after invoking start()')
+  })
+
+  t.test('frozen state', function (t) {
+    'use strict'
+
+    t.plan(3)
+    const app = store()
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      effects: {
+        effect: (action, state) => {
+          t.throws(() => { state.foo = 'baz' }, 'initial state is frozen')
+        }
+      },
+      reducers: {
+        mutates: (action, state) => {
+          t.throws(() => { state.foo = 'baz' }, 'state frozen for reducer')
+        },
+        extends: (action, state) => ({ foo: 'this is fine' })
+      }
+    })
+    const send = app.start()
+    send('extends')
+    send('mutates')
+    send('effect')
+    let state = app.state()
+    t.throws(() => { state.foo = 'baz' }, 'state() is frozen')
+  })
+
+  t.test('checking equality', function (t) {
+    const app = store({
+      onState: () => t.fail('should not call onState')
+    })
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      effects: {
+        noop: () => true
+      }
+    })
+    const send = app.start()
+    send('noop')
+    setTimeout(t.end, 5)
   })
 })
 

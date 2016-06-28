@@ -50,8 +50,7 @@ function store (_handlers) {
       console.warn('must call store.start() before store.state()')
       return {}
     }
-    if (opts.noFreeze) return xtend(send.state())
-    else return Object.freeze(xtend(send.state()))
+    return send.state()
   }
 
   // start the application
@@ -83,7 +82,7 @@ function store (_handlers) {
     send = sendAction({
       onaction: handleAction,
       onchange: onchange,
-      state: initialState
+      state: Object.freeze(initialState)
     })
 
     // subscriptions are loaded after sendAction() is called
@@ -157,6 +156,7 @@ function store (_handlers) {
     // (obj, obj) -> null
     function onchange (action, newState, oldState) {
       if (newState === oldState) return
+      Object.freeze(newState)
       handlers.onState(action, newState, oldState, send)
     }
   }
