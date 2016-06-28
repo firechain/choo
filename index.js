@@ -82,7 +82,7 @@ function store (_handlers) {
     send = sendAction({
       onaction: handleAction,
       onchange: onchange,
-      state: Object.freeze(initialState)
+      state: opts.noFreeze ? initialState : Object.freeze(initialState)
     })
 
     // subscriptions are loaded after sendAction() is called
@@ -155,8 +155,8 @@ function store (_handlers) {
     // update the DOM after every state mutation
     // (obj, obj) -> null
     function onchange (action, newState, oldState) {
-      if (newState === oldState) return
-      Object.freeze(newState)
+      if (newState === oldState) { return }
+      if (!opts.noFreeze) { console.log('freezing'); Object.freeze(newState) }
       handlers.onState(action, newState, oldState, send)
     }
   }

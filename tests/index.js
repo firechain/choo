@@ -1,3 +1,4 @@
+'use strict'
 const tape = require('tape')
 const store = require('../')
 
@@ -80,8 +81,6 @@ tape('state', function (t) {
   })
 
   t.test('frozen state', function (t) {
-    'use strict'
-
     t.plan(3)
     const app = store()
     app.model({
@@ -106,6 +105,35 @@ tape('state', function (t) {
     send('effect')
     let state = app.state()
     t.throws(() => { state.foo = 'baz' }, 'state() is frozen')
+  })
+
+  t.test('noFreeze option', function (t) {
+    t.plan(3)
+    const app = store()
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      effects: {
+        effect: (action, state) => {
+          t.doesNotThrow(() => { state.foo = 'baz' }, 'initial state is not frozen')
+          return state
+        }
+      },
+      reducers: {
+        mutates: (action, state) => {
+          t.doesNotThrow(() => { state.foo = 'baz' }, 'state is not frozen for reducer')
+          return state
+        },
+        extends: (action, state) => ({ foo: 'this is fine' })
+      }
+    })
+    const send = app.start({ noFreeze: true })
+    send('extends')
+    send('mutates')
+    send('effect')
+    let state = app.state()
+    t.doesNotThrow(() => { state.foo = 'baz' }, 'state() is not frozen')
   })
 
   t.test('checking equality', function (t) {
