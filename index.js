@@ -1,82 +1,88 @@
-const history = require('sheet-router/history')
-const sheetRouter = require('sheet-router')
 const document = require('global/document')
-const href = require('sheet-router/href')
-const hash = require('sheet-router/hash')
-const hashMatch = require('hash-match')
 const sendAction = require('send-action')
 const mutate = require('xtend/mutable')
 const assert = require('assert')
 const xtend = require('xtend')
-const yo = require('yo-yo')
 
-choo.view = yo
-module.exports = choo
+module.exports = store
 
 // framework for creating sturdy web applications
-// null -> fn
-function choo () {
-  const _models = []
-  var _router = null
+// obj -> fn
+function store (_handlers) {
+  var reducersCalled = false
+  var effectsCalled = false
+  var stateCalled = false
+  var subsCalled = false
+  var send = null
+  const handlers = Object.assign({
+    onError: (err) => {
+      if (err) console.error(err)
+    },
+    onAction: () => {},
+    onState: () => {}
+  }, _handlers || {})
 
-  start.toString = toString
-  start.router = router
+  ;['onError', 'onAction', 'onState'].forEach((handler) => {
+    if (typeof handlers[handler] !== 'function') {
+      throw new Error(handler + ' passed to store is not a function')
+    }
+  })
+
+  const _models = []
+
   start.model = model
   start.start = start
+  start.state = getState
 
   return start
 
-  // render the application to a string
-  // (str, obj) -> str
-  function toString (route, serverState) {
-    const initialState = {}
-    const nsState = {}
+  // create a new model
+  // (obj) -> null
+  function model (model) {
+    _models.push(model)
+  }
 
-    _models.forEach(function (model) {
-      const ns = model.namespace
-      if (ns) {
-        if (!nsState[ns]) nsState[ns] = {}
-        apply(ns, model.state, nsState)
-        nsState[ns] = xtend(nsState[ns], serverState[ns])
-      } else {
-        apply(model.namespace, model.state, initialState)
-      }
-    })
-
-    const state = xtend(initialState, xtend(serverState, nsState))
-    const tree = _router(route, state, function () {
-      throw new Error('send() cannot be called on the server')
-    })
-
-    return tree.toString()
+  // get the current application state
+  // (obj) -> obj
+  function getState (opts) {
+    opts = opts || {}
+    if (send === null) {
+      console.warn('must call store.start() before store.state()')
+      return {}
+    }
+    return send.state()
   }
 
   // start the application
-  // (str?, obj?) -> DOMNode
-  function start (rootId, opts) {
-    if (!opts && typeof rootId !== 'string') {
-      opts = rootId
-      rootId = null
-    }
+  // (obj?) -> fn
+  function start (opts) {
     opts = opts || {}
-    const name = opts.name || 'choo'
     const initialState = {}
     const reducers = {}
     const effects = {}
 
-    _models.push(appInit(opts))
     _models.forEach(function (model) {
-      if (model.state) apply(model.namespace, model.state, initialState)
-      if (model.reducers) apply(model.namespace, model.reducers, reducers)
-      if (model.effects) apply(model.namespace, model.effects, effects)
+      if (!stateCalled && model.state && !opts.noState) {
+        apply(model.namespace, model.state, initialState)
+      }
+      if (!reducersCalled && model.reducers && !opts.noReducers) {
+        apply(model.namespace, model.reducers, reducers)
+      }
+      if (!effectsCalled && model.effects && !opts.noEffects) {
+        apply(model.namespace, model.effects, effects)
+      }
     })
 
+    if (!opts.noState) stateCalled = true
+    if (!opts.noReducers) reducersCalled = true
+    if (!opts.noEffects) effectsCalled = true
+
     // send() is used to trigger actions inside
-    // views, effects and subscriptions
-    const send = sendAction({
+    // effects and subscriptions
+    send = sendAction({
       onaction: handleAction,
       onchange: onchange,
-      state: initialState
+      state: opts.noFreeze ? initialState : Object.freeze(initialState)
     })
 
     // subscriptions are loaded after sendAction() is called
@@ -85,41 +91,19 @@ function choo () {
     // be loaded
     document.addEventListener('DOMContentLoaded', function () {
       _models.forEach(function (model) {
-        if (model.subscriptions) {
+        if (!subsCalled && model.subscriptions && !opts.noSubscriptions) {
           assert.ok(Array.isArray(model.subscriptions), 'subs must be an arr')
           model.subscriptions.forEach(function (sub) {
             sub(send)
           })
         }
       })
+      if (!opts.noSubscriptions) {
+        subsCalled = true
+      }
     })
 
-    // If an id is provided, the application will rehydrate
-    // on the node. If no id is provided it will return
-    // a tree that's ready to be appended to the DOM.
-    //
-    // The rootId is determined to find the application root
-    // on update. Since the DOM nodes change between updates,
-    // we must call document.querySelector() to find the root.
-    // Use different names when loading multiple choo applications
-    // on the same page
-    if (rootId) {
-      document.addEventListener('DOMContentLoaded', function (event) {
-        rootId = rootId.replace(/^#/, '')
-
-        const oldTree = document.querySelector('#' + rootId)
-        assert.ok(oldTree, 'could not find node #' + rootId)
-
-        const newTree = _router(send.state().app.location, send.state(), send)
-
-        yo.update(oldTree, newTree)
-      })
-    } else {
-      rootId = name + '-root'
-      const tree = _router(send.state().app.location, send.state(), send)
-      tree.setAttribute('id', rootId)
-      return tree
-    }
+    return send
 
     // handle an action by either reducers, effects
     // or both - return the new state when done
@@ -128,6 +112,8 @@ function choo () {
       var reducersCalled = false
       var effectsCalled = false
       const newState = xtend(state)
+
+      handlers.onAction(action, state, action.type, send)
 
       // validate if a namespace exists. Namespaces
       // are delimited by the first ':'. Perhaps
@@ -159,7 +145,7 @@ function choo () {
       }
 
       if (!reducersCalled && !effectsCalled) {
-        throw new Error('Could not find action ' + action.type)
+        handlers.onError(new Error(`Could not find action ${action.type}`), state, send)
       }
 
       // allows (newState === oldState) checks
@@ -169,75 +155,10 @@ function choo () {
     // update the DOM after every state mutation
     // (obj, obj) -> null
     function onchange (action, newState, oldState) {
-      if (newState === oldState) return
-      const oldTree = document.querySelector('#' + rootId)
-      assert.ok(oldTree, "Could not find DOM node '#" + rootId + "' to update")
-      const newTree = _router(newState.app.location, newState, send, oldState)
-      newTree.setAttribute('id', rootId)
-      yo.update(oldTree, newTree)
+      if (newState === oldState) { return }
+      if (!opts.noFreeze) { console.log('freezing'); Object.freeze(newState) }
+      handlers.onState(action, newState, oldState, send)
     }
-  }
-
-  // register all routes on the router
-  // [obj|fn] -> null
-  function router (cb) {
-    _router = sheetRouter(cb)
-    return _router
-  }
-
-  // create a new model
-  // (str?, obj) -> null
-  function model (model) {
-    _models.push(model)
-  }
-}
-
-// initial application state model
-// obj -> obj
-function appInit (opts) {
-  const initialLocation = (opts.hash === true)
-    ? hashMatch(document.location.hash)
-    : document.location.href
-
-  const model = {
-    namespace: 'app',
-    state: { location: initialLocation },
-    subscriptions: [],
-    reducers: {
-      // handle href links
-      location: function setLocation (action, state) {
-        return {
-          location: action.location.replace(/#.*/, '')
-        }
-      }
-    }
-  }
-
-  // if hash routing explicitly enabled, subscribe to it
-  if (opts.hash === true) {
-    pushLocationSub(function (navigate) {
-      hash(function (fragment) {
-        navigate(hashMatch(fragment))
-      })
-    })
-  // otherwise, subscribe to HTML5 history API
-  } else {
-    if (opts.history !== false) pushLocationSub(history)
-    // enable catching <a href=""></a> links
-    if (opts.href !== false) pushLocationSub(href)
-  }
-
-  return model
-
-  // create a new subscription that modifies
-  // 'app:location' and push it to be loaded
-  // fn -> null
-  function pushLocationSub (cb) {
-    model.subscriptions.push(function (send) {
-      cb(function (href) {
-        send('app:location', { location: href })
-      })
-    })
   }
 }
 

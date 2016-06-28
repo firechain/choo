@@ -1,103 +1,215 @@
+'use strict'
 const tape = require('tape')
-const choo = require('../')
+const store = require('../')
 
-tape('should render on the server', function (t) {
-  t.test('should render a static response', function (t) {
+tape('setup', function (t) {
+  t.test('throws error if not evoked with a function', function (t) {
     t.plan(1)
-
-    const app = choo()
-    app.router((route) => [
-      route('/', () => choo.view`<h1>Hello Tokyo!</h1>`)
-    ])
-
-    const html = app.toString('/')
-    const expected = '<h1>Hello Tokyo!</h1>'
-    t.equal(html, expected, 'strings are equal')
-  })
-
-  t.test('should accept a state object', function (t) {
-    t.plan(1)
-
-    const app = choo()
-    app.router((route) => [
-      route('/', function (params, state) {
-        return choo.view`<h1>meow meow ${state.message}</h1>`
+    t.throws(() => {
+      store({
+        onState: 1
       })
-    ])
-
-    const html = app.toString('/', { message: 'nyan!' })
-    const expected = '<h1>meow meow nyan!</h1>'
-    t.equal(html, expected, 'strings are equal')
+    }, 'throws if given non-function')
   })
+})
 
-  t.test('should extend flat existing models', function (t) {
-    t.plan(1)
-
-    const app = choo()
-    app.model({ state: { bin: 'baz', beep: 'boop' } })
-    app.router((route) => [
-      route('/', function (params, state) {
-        return choo.view`<h1>${state.foo} ${state.bin} ${state.beep}</h1>`
-      })
-    ])
-
-    const state = { foo: 'bar!', beep: 'beep' }
-    const html = app.toString('/', state)
-    const expected = '<h1>bar! baz beep</h1>'
-    t.equal(html, expected, 'strings are equal')
-  })
-
-  t.test('should extend namespaced existing models', function (t) {
-    t.plan(1)
-
-    const app = choo()
+tape('state, reducers, effects', function (t) {
+  t.test('on by default', function (t) {
+    t.plan(3)
+    const app = store()
     app.model({
-      namespace: 'hello',
-      state: { bin: 'baz', beep: 'boop' }
-    })
-    app.router((route) => [
-      route('/', function (params, state) {
-        return choo.view`
-          <h1>${state.hello.foo} ${state.hello.bin} ${state.hello.beep}</h1>
-        `
-      })
-    ])
-
-    const state = {
-      hello: {
-        foo: 'bar!',
-        beep: 'beep'
+      state: {
+        state: true
+      },
+      reducers: {
+        reducer: () => t.pass('sends reducer')
+      },
+      effects: {
+        effect: () => t.pass('sends effect')
       }
-    }
-    const html = app.toString('/', state)
-    const expected = '<h1>bar! baz beep</h1>'
-    t.equal(html, expected, 'strings are equal')
+    })
+    const send = app.start()
+    t.ok(app.state().state, 'sets initial state')
+    send('reducer')
+    send('effect')
   })
 
-  t.test('should throw if called without route', function (t) {
+  t.test('noState', function (t) {
     t.plan(1)
-
-    const app = choo()
-    app.router((route) => [
-      route('/', function (params, state, send) {
-        send('hey!')
-      })
-    ])
-
-    t.throws(app.toString.bind(null), /route must be a string/)
+    const app = store()
+    app.model({
+      state: {
+        hasState: true
+      }
+    })
+    app.start({ noState: true })
+    t.notOk(app.state().hasState, 'no initial state')
   })
 
-  t.test('should throw if calling send()', function (t) {
+  t.test('noReducers, noEffects', function (t) {
+    t.plan(2)
+    const app = store({
+      onError: () => {
+        t.ok('no effects or reducers')
+      }
+    })
+    app.model({
+      reducers: { reducer: () => true },
+      effects: { effect: () => true }
+    })
+    const send = app.start({
+      noReducers: true,
+      noEffects: true
+    })
+    send('reducer')
+    send('effect')
+  })
+})
+
+tape('state', function (t) {
+  t.test('state()', function (t) {
+    t.plan(2)
+    const app = store()
+    app.model({
+      state: {
+        foo: 'bar'
+      }
+    })
+    t.deepEqual(app.state(), {}, 'returns empty object if invoked before start()')
+    app.start()
+    t.deepEqual(app.state(), { foo: 'bar' }, 'returns state after invoking start()')
+  })
+
+  t.test('frozen state', function (t) {
+    t.plan(3)
+    const app = store()
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      effects: {
+        effect: (action, state) => {
+          t.throws(() => { state.foo = 'baz' }, 'initial state is frozen')
+        }
+      },
+      reducers: {
+        mutates: (action, state) => {
+          t.throws(() => { state.foo = 'baz' }, 'state frozen for reducer')
+        },
+        extends: (action, state) => ({ foo: 'this is fine' })
+      }
+    })
+    const send = app.start()
+    send('extends')
+    send('mutates')
+    send('effect')
+    let state = app.state()
+    t.throws(() => { state.foo = 'baz' }, 'state() is frozen')
+  })
+
+  t.test('noFreeze option', function (t) {
+    t.plan(3)
+    const app = store()
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      effects: {
+        effect: (action, state) => {
+          t.doesNotThrow(() => { state.foo = 'baz' }, 'initial state is not frozen')
+          return state
+        }
+      },
+      reducers: {
+        mutates: (action, state) => {
+          t.doesNotThrow(() => { state.foo = 'baz' }, 'state is not frozen for reducer')
+          return state
+        },
+        extends: (action, state) => ({ foo: 'this is fine' })
+      }
+    })
+    const send = app.start({ noFreeze: true })
+    send('extends')
+    send('mutates')
+    send('effect')
+    let state = app.state()
+    t.doesNotThrow(() => { state.foo = 'baz' }, 'state() is not frozen')
+  })
+
+  t.test('checking equality', function (t) {
+    const app = store({
+      onState: () => t.fail('should not call onState')
+    })
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      effects: {
+        noop: () => true
+      }
+    })
+    const send = app.start()
+    send('noop')
+    setTimeout(t.end, 5)
+  })
+})
+
+tape('handlers', function (t) {
+  t.test('onError', function (t) {
     t.plan(1)
+    const app = store({
+      onError: function (error, state, send) {
+        t.ok(error instanceof Error, 'returns error object')
+      }
+    })
+    const send = app.start()
+    send('nonexistant:reducer')
+  })
 
-    const app = choo()
-    app.router((route) => [
-      route('/', function (params, state, send) {
-        send('hey!')
-      })
-    ])
+  t.test('onAction', function (t) {
+    t.plan(2)
+    const app = store({
+      onAction: function (action, state, caller, send) {
+        t.equals(caller, 'touch', 'returns action name')
+        t.ok(state.untouched, 'fires before reducer changes state')
+      }
+    })
+    app.model({
+      state: {
+        untouched: true
+      },
+      reducers: {
+        touch: (action, state) => ({ untouched: false })
+      }
+    })
+    const send = app.start()
+    send('touch')
+  })
 
-    const msg = /send\(\) cannot be called on the server/
-    t.throws(app.toString.bind(null, '/', { message: 'nyan!' }), msg)
+  t.test('onState', function (t) {
+    t.plan(3)
+    var i = 0
+    const app = store({
+      onState: function (action, state, prev, send) {
+        i += 1
+        t.equals(prev.foo, 'bar', 'returns old state')
+        t.equals(state.foo, 'baz', 'returns new state')
+        t.equals(i, 1, 'only trigger if reducer is called')
+      }
+    })
+    app.model({
+      state: {
+        foo: 'bar'
+      },
+      reducers: {
+        foo: (action, state) => ({ foo: action.value })
+      },
+      effects: {
+        noop: (action, state) => true
+      }
+    })
+    const send = app.start()
+    send('noop')
+    send('foo', { value: 'baz' })
   })
 })
