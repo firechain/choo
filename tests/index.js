@@ -50,7 +50,7 @@ tape('state, reducers, effects', function (t) {
     t.plan(2)
     const app = store({
       onError: () => {
-        t.pass('no effects or reducers')
+        t.ok('no effects or reducers')
       }
     })
     app.model({
